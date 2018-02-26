@@ -11,4 +11,5 @@ class BaseModel(object):
 class RNN(BaseModel):
     def __init__(self):
         BaseModel.__init__(self)
+        input = Input(shape=(), dtype='int32', )
         self.model= Model(input, preds)
