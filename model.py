@@ -5,6 +5,13 @@ from keras.models import Model
 from keras.layers import Dense, SimpleRNN, LSTM, Input, Embedding, Bidirectional
 
 
+class TrainResults():
+    def __init__(self,train_loss=None,val_loss=None,epoch=None):
+        self.val_loss=val_loss
+        self.train_loss=train_loss
+        self.epoch = epoch
+
+
 class BaseRNNModel(object):
     def __init__(self, n_classes, model_name="test", rnn_unit_type="rnn", loss_type="binary_crossentropy",
                  out_activation="softmax"):
@@ -25,8 +32,8 @@ class BaseRNNModel(object):
     def predict(self, x_test, batch_size=10, verbose=1):
         return self.model.predict(x_test, batch_size=batch_size, verbose=verbose)
 
-    def evaluate(self, x_test, y_test, batch_size=10, verbose=0):
-        scores = self.model.evaluate(x_test, y_test, verbose=verbose, batch_size=batch_size)
+    def evaluate(self, x_data, y_data, batch_size=10, verbose=0):
+        scores = self.model.evaluate(x_data, y_data, verbose=verbose, batch_size=batch_size)
         return self.model.metrics_names, scores
 
     def save_weights(self, folder):
@@ -50,15 +57,14 @@ class BaseRNNModel(object):
 
 class RNN(BaseRNNModel):
 
-    def __init__(self, max_seq_length, features, n_classes, embed_dim=32, emb_trainable=True,
+    def __init__(self, max_seq_length, vocab_size, n_classes, embed_dim=32, emb_trainable=True,
                  model_name="simple_rnn", rnn_unit_type='rnn',
                  loss_type="binary_crossentropy", hidden_dim=32, hidden_activation="relu", out_activation="softmax",
                  bidirectional=False):
         BaseRNNModel.__init__(self, n_classes, model_name, rnn_unit_type, loss_type, out_activation)
-        self.out_activation = out_activation
         self.bidirectional = bidirectional
         self.max_seq_length = max_seq_length
-        self.features = features
+        self.vocab_size = vocab_size
         self.embed_dim = embed_dim
         self.emb_trainable = emb_trainable
         self.hidden_dim = hidden_dim
@@ -68,7 +74,7 @@ class RNN(BaseRNNModel):
 
     def build_model(self):
         # the model receives sequences of length self.max_seq_length. At each timestep, the vector size is self.features.
-        input = Input(shape=(self.max_seq_length, self.features), dtype='int32', name="myinput")
+        input = Input(shape=(self.max_seq_length, ), dtype='int32', name="myinput")
         # the input sequence is encoded into dense vectors of size self.embed_dim.
         # the input value 0 is a special padding value (for sequences with variable length)
         # that should be masked out. Our vocabulary SHOULD start from 1.
@@ -85,8 +91,8 @@ class RNN(BaseRNNModel):
         # For Bidirectional rnn, the forward and backward states will be concatenated. So the output vector
         # will have size self.hidden_dim*2.
         if self.bidirectional:
-            recurrent_layer = Bidirectional(recurrent_layer, merge_mode="concat")(embedded_input)
-        else: recurrent_layer = recurrent_layer(embedded_input)
+            recurrent_output = Bidirectional(recurrent_layer, merge_mode="concat")(embedded_input)
+        else: recurrent_output = recurrent_layer(embedded_input)
 
         if self.loss_type=="binary_crossentropy" or self.loss_type=="sparse_categorical_crossentropy":
             out_dim=1
@@ -95,13 +101,17 @@ class RNN(BaseRNNModel):
         else: raise ValueError("The allowed loss functions are binary_crossentropy, categorical_crossentropy, "
                                "sparse_categorical_crossentropy.")
 
-        # The output layer takes as input the last hidden state of the rnn and produces a probability distribution
-        # over classes.
-        preds = Dense(out_dim, activation=self.out_activation, name="output")(recurrent_layer)
-        self.model = Model(inputs=input, outputs=preds)
+        # The output layer takes as input the last hidden state of the rnn and applies self.out_activation function.
+        # If self.out_activation is softmax (this is what we need), it produces a probability distribution over classes.
+        output = Dense(out_dim, activation=self.out_activation, name="output")(recurrent_output)
+        self.model = Model(inputs=input, outputs=output)
 
 
     def embedding_layer(self):
-        return Embedding(input_dim=self.features, output_dim=self.embed_dim, mask_zero=True,
+        # This layer turns positive integers (indexes) into dense vectors of fixed size.
+        # eg. [[4], [20]] -> [[0.25, 0.1], [0.6, -0.2]]
+        # input_dim is the size of the vocabulary, i.e. the max index that will be turned into a vector.
+        # output_dim is the dense vector size.
+        return Embedding(input_dim=self.vocab_size, output_dim=self.embed_dim, mask_zero=True,
                          input_length=self.max_seq_length,
                          trainable=self.emb_trainable, name="embedding")
